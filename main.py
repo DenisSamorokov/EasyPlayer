@@ -5,7 +5,7 @@ import sqlite3
 import shutil
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QStyle, QMessageBox, QInputDialog, QMenu, \
     QListWidgetItem, QCheckBox, QWidget, QHBoxLayout, QPushButton
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QCursor, QIcon
 from PyQt6 import uic
 from io import StringIO
@@ -573,6 +573,29 @@ class MediaPlayer:
             except Exception:
                 return False
 
+    def format_time(self, ms):
+        # Форматирование времени из миллисекунд в MM:SS
+        if ms < 0:
+            return "--:--"
+        seconds = ms // 1000
+        minutes = seconds // 60
+        seconds = seconds % 60
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def get_current_time(self):
+        # Получение текущего времени воспроизведения
+        if not self.current_media:
+            return "--:--", "--:--", 0
+
+        current = self.player.get_time()
+        duration = self.current_media.get_duration()
+
+        if current < 0 or duration < 0:
+            return "--:--", "--:--", 0
+
+        progress = (current / duration * 100) if duration > 0 else 0
+        return self.format_time(current), self.format_time(duration), progress
+
     def pause(self):
         # Пауза
         self.player.pause()
@@ -588,6 +611,11 @@ class MediaPlayer:
         # Установка громкости
         self.player.audio_set_volume(volume)
 
+    def set_position(self, position):
+        # Установка позиции воспроизведения
+        if self.current_media:
+            self.player.set_position(position / 100.0)
+
 
 class EasyPlayer(QMainWindow):
     def __init__(self):
@@ -600,6 +628,11 @@ class EasyPlayer(QMainWindow):
         self.file_manager = FileManager(self.music_dir)
         self.media_player = MediaPlayer()
 
+        # Таймер для обновления времени
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self.update_time_label)
+        self.update_timer.start(1000)  # Обновление каждую секунду
+
         # Инициализация UI
         self.init_storage_controls()
         self.setup_icons()
@@ -610,6 +643,7 @@ class EasyPlayer(QMainWindow):
         self.files_list = []
         self.current_volume = 100
         self.volume_slider.setValue(self.current_volume)
+        self.is_seeking = False
 
         # Загрузка плейлистов
         self.load_playlists()
@@ -657,6 +691,11 @@ class EasyPlayer(QMainWindow):
         self.next_button.clicked.connect(self.next_track)
         self.volume_slider.valueChanged.connect(self.set_volume)
         self.playlist_widget.itemDoubleClicked.connect(self.play_file)
+
+        # Подключаем события для перемотки
+        self.progress_slider.sliderPressed.connect(self.on_seek_start)
+        self.progress_slider.sliderReleased.connect(self.on_seek_end)
+        self.progress_slider.valueChanged.connect(self.on_seek_change)
 
         self.playlists_widget.itemDoubleClicked.connect(self.change_playlist)
         self.playlists_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -897,6 +936,26 @@ class EasyPlayer(QMainWindow):
                 'Успешно',
                 f'Директория сохранения изменена на:\n{new_dir}'
             )
+
+    def update_time_label(self):
+        # Обновление отображения времени воспроизведения
+        if not self.is_seeking:  # Обновляем только если не идет перемотка
+            current, duration, progress = self.media_player.get_current_time()
+            self.time_label.setText(f"{current} / {duration}")
+            self.progress_slider.setValue(int(progress))
+
+    def on_seek_start(self):
+        # Начало перемотки
+        self.is_seeking = True
+
+    def on_seek_end(self):
+        # Конец перемотки
+        self.is_seeking = False
+
+    def on_seek_change(self, value):
+        # Изменение позиции перемотки
+        if self.is_seeking:
+            self.media_player.set_position(value)
 
     def closeEvent(self, event):
         # Обработка закрытия окна
